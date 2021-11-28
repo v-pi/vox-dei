@@ -225,7 +225,7 @@ namespace VoxDeiTests
 
         [Test]
         //[Ignore("Takes too much time")]
-        [Timeout(5000)]
+        //[Timeout(5000)]
         public void _10_vandalisme()
         {
             var nodes = new List<Node>
@@ -319,6 +319,32 @@ namespace VoxDeiTests
                 new Position(14, 11),
             };
             var gameEngine = new GameEngine(16, 12, 99, 10, nodes, blocks);
+            gameEngine.TestPlayer();
+        }
+
+
+        [Test]
+        public void _custom_test_split()
+        {
+            var nodes = new List<Node>
+            {
+                new Node(4, 2, Direction.LEFT),
+                new Node(9, 1, Direction.RIGHT),
+                new Node(10, 6, Direction.UP),
+            };
+            var blocks = new List<Position>
+            {
+                new Position(7, 0),
+                new Position(7, 1),
+                new Position(7, 2),
+                new Position(7, 3),
+                new Position(7, 4),
+                new Position(7, 5),
+                new Position(7, 6),
+                new Position(7, 7),
+                new Position(7, 8),
+            };
+            var gameEngine = new GameEngine(12, 9, 60, 2, nodes, blocks);
             gameEngine.TestPlayer();
         }
     }

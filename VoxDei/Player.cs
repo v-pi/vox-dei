@@ -42,7 +42,7 @@ namespace VoxDei
             int turnsToUnderstandMoves = 0;
 
             var nodesWithDirections = new List<Node>();
-            var nodesWithoutDirections = firstMap.LiveNodes;
+            var nodesWithoutDirections = firstMap.Nodes;
 
             var maps = new List<Map>() { firstMap };
             while (nodesWithoutDirections.Count > 0)
@@ -56,7 +56,7 @@ namespace VoxDei
                 sw1.Stop();
                 Logger.Log("Understood map (or not) in {0}ms", sw1.ElapsedMilliseconds);
             }
-            firstMap.LiveNodes = nodesWithDirections;
+            firstMap.Nodes = nodesWithDirections;
             for (int ii = 0; ii < turnsToUnderstandMoves; ii++)
             {
                 firstMap = firstMap.GetNextMap();
@@ -66,8 +66,9 @@ namespace VoxDei
             //ParseTurn();
 
             Stopwatch sw2 = Stopwatch.StartNew();
-            var strategist = new Strategist();
-            List<Position?> positionsToBomb = strategist.PositionsToBomb(firstMap);
+            var split = MapSplitter.Split(firstMap);
+            List<Position?> positionsToBomb = Strategist.PositionsToBomb(split);
+            positionsToBomb?.AddRange(Enumerable.Repeat<Position?>(null, Constants.BOMB_TIMEOUT));
             sw2.Stop();
             Logger.Log("Found a series of command in {0}ms", sw2.ElapsedMilliseconds);
 
@@ -79,11 +80,115 @@ namespace VoxDei
         }
     }
 
-    public class Strategist
+    public static class MapSplitter
     {
-        public List<Position?> PositionsToBomb(Map map)
+        public static List<Map> Split(Map map)
         {
-            var allNodesKey = (int)Math.Pow(2, map.LiveNodes.Count) - 1;
+            var emptyCells = new HashSet<Position>();
+            for (int col = 0; col < map.Width; col++)
+            {
+                for (int row = 0; row < map.Height; row++)
+                {
+                    if (!map.Blocks[col, row])
+                    {
+                        emptyCells.Add(new Position(col, row));
+                    }
+                }
+            }
+            var zones = new List<HashSet<Position>>();
+            while (emptyCells.Count > 0)
+            {
+                var zone = new HashSet<Position>();
+                var currentCell = emptyCells.First();
+                var toExplore = new Queue<Position>();
+                toExplore.Enqueue(currentCell);
+                emptyCells.Remove(currentCell);
+                zone.Add(currentCell);
+                while (toExplore.TryDequeue(out currentCell))
+                {
+                    foreach (var direction in Enum.GetValues<Direction>())
+                    {
+                        var neighbour = Map.UnsafeNextPosition(currentCell, direction);
+                        if (emptyCells.Remove(neighbour))
+                        {
+                            zone.Add(neighbour);
+                            toExplore.Enqueue(neighbour);
+                        }
+                    }
+                }
+                zones.Add(zone);
+            }
+            var split = new List<Map>();
+            foreach (var zone in zones)
+            {
+                var splitMap = new Map(map.Height, map.Width)
+                {
+                    Blocks = map.Blocks,
+                    BombsLeft = map.BombsLeft,
+                    RoundsLeft = map.RoundsLeft,
+                };
+
+                map.Nodes.Where(n => zone.Contains(n.Position)).ToList().ForEach(n => splitMap.AddNode(n.Position, n.Direction));
+                if (splitMap.Nodes.Count > 0)
+                {
+                    split.Add(splitMap);
+                }
+            }
+            return split;
+        }
+    }
+
+    public static class Strategist
+    {
+        public static List<Position?> PositionsToBomb(List<Map> maps)
+        {
+            var maxBomb = maps[0].BombsLeft;
+            var allCommands = new List<Position?>();
+            var ellapsed = 0;
+            while (maps.Count > 1)
+            {
+                for (int ii = 0; ii < maps.Count; ii++)
+                {
+                    for (int jj = 0; jj < ellapsed; jj++)
+                    {
+                        maps[ii] = maps[ii].GetNextMap();
+                    }
+                }
+                for (int ii = 1; ii < maxBomb; ii++)
+                {
+                    var candidates = new Dictionary<Map, List<Position?>>();
+                    foreach (var map in maps)
+                    {
+                        map.BombsLeft = ii;
+                        var commands = PositionsToBomb(map);
+                        if (commands != null)
+                        {
+                            candidates[map] = commands;
+                        }
+                    }
+                    if (candidates.Count > 0)
+                    {
+                        var bestCandidate = candidates.OrderBy(kv => kv.Value.Count).First();
+                        maps.Remove(bestCandidate.Key);
+                        maxBomb -= bestCandidate.Value.Count(c => c != null);
+                        allCommands.AddRange(bestCandidate.Value);
+                        ellapsed = bestCandidate.Value.Count();
+                        break;
+                    }
+                }
+            }
+            var remainingMap = maps.Single();
+            for (int jj = 0; jj < ellapsed; jj++)
+            {
+                remainingMap = remainingMap.GetNextMap();
+            }
+            allCommands.AddRange(PositionsToBomb(remainingMap));
+            return allCommands;
+        }
+
+        public static List<Position?> PositionsToBomb(Map map)
+        {
+            var allNodesKey = (int)Math.Pow(2, map.Nodes.Count) - 1;
             var bombsLeft = map.BombsLeft;
             var allFutureMaps = GetAllFutureMaps(map);
             var allFutureNodePositions = GetAllFutureNodePositions(allFutureMaps);
@@ -96,8 +201,10 @@ namespace VoxDei
             // on trie par ordre décroissant pour chaque tour les dégâts
             // les dégâts doivent être stockés dans un entier pour faire des opérations binaires
             // on fait un parcours d'arbre sur ces éléments triés.
+
+            // TODO : start performance profiler for the lulz
+            // split problem !!
             var positionsToBomb = WalkTree(allFutureMaps, 0, 0, allNodesKey, allFutureNodePositions, bombsLeft, new Position?[allFutureMaps.Length]);
-            positionsToBomb.AddRange(Enumerable.Repeat<Position?>(null, Constants.BOMB_TIMEOUT));
             return positionsToBomb;
         }
 
@@ -110,7 +217,7 @@ namespace VoxDei
             {
                 var futureMap = allFutureMaps[ii];
                 allFutureNodePositions[ii] = new int[width, height];
-                foreach (var node in futureMap.LiveNodes)
+                foreach (var node in futureMap.Nodes)
                 {
                     allFutureNodePositions[ii][node.Position.Col, node.Position.Row] |= node.Id;
                 }
@@ -118,12 +225,25 @@ namespace VoxDei
             return allFutureNodePositions;
         }
 
-        private List<Position?> WalkTree(Map[] allFutureMaps, int index, int destroyedNodes, int allNodesKey, int[][,] allFutureNodePositions, int bombsLeft, Position?[] plantedBombs)
+        private static List<Position?> WalkTree(Map[] allFutureMaps, int index, int destroyedNodes, int allNodesKey, int[][,] allFutureNodePositions, int bombsLeft, Position?[] plantedBombs)
         {
             // check that no node is there when we want to drop the bomb
             // check that there are no chain explosions
+
             var futureRound = index + Constants.BOMB_TIMEOUT;
             if (futureRound >= allFutureMaps.Length)
+            {
+                return null;
+            }
+            // TODO : si la meilleure des BestOption sur tous les rounds restants est inférieure au nombre de nodes restante divisé par le nombre de bombes restantes, on peut renvoyer null
+            int remainingBestOption = 0;
+            for (int ii = futureRound; ii < allFutureMaps.Length; ii++)
+            {
+                remainingBestOption = Math.Max(remainingBestOption, allFutureMaps[ii].BestOptions.FirstOrDefault().Count);
+            }
+            var remainingNodesKey = allNodesKey & ~destroyedNodes;
+            var remainingNodesCount = (float)Utils.CountSetBits(remainingNodesKey);
+            if (remainingBestOption < Math.Ceiling(remainingNodesCount / bombsLeft))
             {
                 return null;
             }
@@ -351,11 +471,18 @@ namespace VoxDei
 
         public bool[,] Blocks;
 
-        public List<Node> LiveNodes = new List<Node>();
-
-        public List<Position> BombsPlanted = new List<Position>();
+        public List<Node> Nodes = new List<Node>();
 
         public List<PositionAndDamage> BestOptions;
+
+        private int _nodeCount;
+        private int NodeCount
+        {
+            get
+            {
+                return _nodeCount++;
+            }
+        }
 
         public Map(string[] lines)
         {
@@ -363,7 +490,6 @@ namespace VoxDei
             Width = lines[1].Length;
             Height = lines.Length - 1;
             Blocks = new bool[Width, Height];
-            int nodeCount = 0;
 
             for (int row = 0; row < Height; row++)
             {
@@ -378,8 +504,7 @@ namespace VoxDei
                             Blocks[col, row] = true;
                             break;
                         case '@':
-                            LiveNodes.Add(new Node() { Id = (int)Math.Pow(2, nodeCount), Position = new Position(col, row) });
-                            nodeCount++;
+                            AddNode(col, row);
                             break;
                         default:
                             break;
@@ -389,6 +514,17 @@ namespace VoxDei
 
             RoundsLeft = int.Parse(inputs[0]); // number of rounds left before the end of the game
             BombsLeft = int.Parse(inputs[1]); // number of bombs left
+        }
+
+        public void AddNode(int col, int row)
+        {
+            var position = new Position(col, row);
+            AddNode(position);
+        }
+
+        public void AddNode(Position position, Direction direction = default(Direction))
+        {
+            Nodes.Add(new Node() { Id = (int)Math.Pow(2, NodeCount), Position = position, Direction = direction });
         }
 
         public Map(int height, int width)
@@ -413,7 +549,7 @@ namespace VoxDei
         {
             var nextMap = (Map)MemberwiseClone();
             nextMap.RoundsLeft--;
-            nextMap.LiveNodes = GetUpdatedNodes(LiveNodes, impacts).ToList();
+            nextMap.Nodes = GetUpdatedNodes(Nodes, impacts).ToList();
 
             return nextMap;
         }
@@ -515,9 +651,9 @@ namespace VoxDei
 
         public bool ContainsAnyNode(int col, int row)
         {
-            for (int ii = 0; ii < LiveNodes.Count; ii++)
+            for (int ii = 0; ii < Nodes.Count; ii++)
             {
-                Node node = LiveNodes[ii];
+                Node node = Nodes[ii];
                 if (node.Position.Col == col && node.Position.Row == row) return true;
             }
             return false;
@@ -570,7 +706,7 @@ namespace VoxDei
                     {
                         var position = new Position(col, row);
                         var impacts = GetImpacts(position);
-                        var destroyed = LiveNodes.Where(n => impacts.Contains(n.Position)).ToList();
+                        var destroyed = Nodes.Where(n => impacts.Contains(n.Position)).ToList();
                         if (destroyed.Any())
                         {
                             var aggDestroyed = destroyed.Select(n => n.Id).Aggregate((id1, id2) => id1 | id2);
@@ -583,6 +719,25 @@ namespace VoxDei
             BestOptions = potentialDamagedNodes.OrderByDescending(pad => pad.Count).ToList();
         }
 
+    }
+
+    public static class Utils
+    {
+        /// <summary>
+        /// Function to get no of set bits in binary representation of passed binary number
+        /// </summary>
+        /// <param name="n"></param>
+        /// <returns></returns>
+        public static int CountSetBits(int n)
+        {
+            int count = 0;
+            while (n > 0)
+            {
+                n &= (n - 1);
+                count++;
+            }
+            return count;
+        }
     }
 
     public struct PositionAndDamage
@@ -602,23 +757,7 @@ namespace VoxDei
 
         private static int GetDamageCount(int value)
         {
-            return CountSetBits(value);
-        }
-
-        /// <summary>
-        /// Function to get no of set bits in binary representation of passed binary number
-        /// </summary>
-        /// <param name="n"></param>
-        /// <returns></returns>
-        private static int CountSetBits(int n)
-        {
-            int count = 0;
-            while (n > 0)
-            {
-                n &= (n - 1);
-                count++;
-            }
-            return count;
+            return Utils.CountSetBits(value);
         }
     }
 
@@ -630,8 +769,6 @@ namespace VoxDei
 
         public Position Position;
 
-        public int? TimeToLive;
-
         private static int NodeCount;
 
         public Node(int col, int row, Direction direction)
@@ -639,7 +776,6 @@ namespace VoxDei
             Id = (int)Math.Pow(2, NodeCount);
             Direction = direction;
             Position = new Position(col, row);
-            TimeToLive = null;
             NodeCount++;
         }
 

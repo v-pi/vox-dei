@@ -33,7 +33,7 @@ namespace VoxDeiTests
             {
                 BombsLeft = bombs,
                 RoundsLeft = rounds,
-                LiveNodes = nodes,
+                Nodes = nodes,
                 Blocks = GetBlockArray(blocks, cols, rows)
             };
             var firstLines = new List<string> { $"{Columns} {Rows}" };
@@ -74,7 +74,7 @@ namespace VoxDeiTests
                     Assert.Fail("No bomb left");
                 }
                 var bombPlanted = new Position(s);
-                if (currentMap.LiveNodes.Any(n => n.Position == bombPlanted))
+                if (currentMap.Nodes.Any(n => n.Position == bombPlanted))
                 {
                     Assert.Fail($"You tried to place a fork-bomb on ({bombPlanted}) but a firewall node is there");
                 }
@@ -85,7 +85,7 @@ namespace VoxDeiTests
             {
                 Assert.Fail("No turn left");
             }
-            if (currentMap.LiveNodes.Count == 0)
+            if (currentMap.Nodes.Count == 0)
             {
                 Assert.Pass("All nodes destroyed");
             }
