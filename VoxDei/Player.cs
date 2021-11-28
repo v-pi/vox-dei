@@ -6,22 +6,12 @@ using System.Text;
 
 public class Player
 {
-
-    // TODO [NECESSARY]: Débugger la compréhension de la map pour Vandalisme
-    // TODO [NECESSARY]: Quand la séquence est finie, recommencer ?
-    // TODO [NECESSARY]: Débugger La barre de fer -> pourquoi on pose une bombe sur une node -_-
-    // TODO [NECESSARY]: Débugger 4 noeuds furtifs une bombe -> essayer de supprimer le temps d'attente après la compréhension de la map ?
-    // TODO [LOW PRIORITY]: Modéliser le déclenchement en série des bombes
-    // TODO [LOW PRIORITY]: Vérifier le temps d'amorçage des bombes ? (seulement 2 tours)
-    // 100ms... trololol, on est déjà à 200 sur le premier
-
     public static void Main(string[] args)
     {
         var v = new WilliamRockwood();
         v.Play();
     }
 }
-
 
 public class WilliamRockwood
 {
@@ -49,10 +39,10 @@ public class WilliamRockwood
         Map firstMap = IoManager.ParseTurn(Height);
         int turnsToUnderstandMoves = 0;
 
-        List<Node> nodesWithDirections = new List<Node>();
-        List<Node> nodesWithoutDirections = firstMap.LiveNodes;
+        var nodesWithDirections = new List<Node>();
+        var nodesWithoutDirections = firstMap.LiveNodes;
 
-        List<Map> maps = new List<Map>() { firstMap };
+        var maps = new List<Map>() { firstMap };
         while (nodesWithoutDirections.Count > 0)
         {
             turnsToUnderstandMoves++;
@@ -74,8 +64,7 @@ public class WilliamRockwood
         //ParseTurn();
 
         Stopwatch sw2 = Stopwatch.StartNew();
-        var strategist = new Strategist2();
-        //var strategist = new Strategist(firstMap);
+        var strategist = new Strategist();
         List<Position?> positionsToBomb = strategist.PositionsToBomb(firstMap);
         sw2.Stop();
         Logger.Log("Found a series of command in {0}ms", sw2.ElapsedMilliseconds);
@@ -88,13 +77,12 @@ public class WilliamRockwood
     }
 }
 
-public class Strategist2
+public class Strategist
 {
     public List<Position?> PositionsToBomb(Map map)
     {
         var allNodesKey = (int)Math.Pow(2, map.LiveNodes.Count) - 1;
         var bombsLeft = map.BombsLeft;
-        //var turnsLeft = map.RoundsLeft - Constants.BOMB_TIMEOUT;
         var allFutureMaps = GetAllFutureMaps(map);
         var allFutureNodePositions = GetAllFutureNodePositions(allFutureMaps);
         // si il reste autant de bombes que de nodes => yolo
@@ -111,7 +99,7 @@ public class Strategist2
         return positionsToBomb;
     }
 
-    private int[][,] GetAllFutureNodePositions(Map[] allFutureMaps)
+    private static int[][,] GetAllFutureNodePositions(Map[] allFutureMaps)
     {
         var width = allFutureMaps[0].Width;
         var height = allFutureMaps[0].Height;
@@ -208,7 +196,7 @@ public class Strategist2
         return commands;
     }
 
-    private Map[] GetAllFutureMaps(Map map)
+    private static Map[] GetAllFutureMaps(Map map)
     {
         var totalRounds = map.RoundsLeft;
         map.ComputePotentialDamage();
@@ -220,253 +208,6 @@ public class Strategist2
             map.ComputePotentialDamage();
         }
         return allFutureMaps;
-    }
-}
-
-public class Strategist
-{
-    public Dictionary<Direction, Node>[,] NextTurnPositions;
-
-    public Strategist(Map map)
-    {
-        NextTurnPositions = GetFuturePositions(map, 1);
-    }
-
-    public Dictionary<Direction, Node>[,] GetFuturePositions(Map map, int depthIntoTheFuture)
-    {
-        var result = new Dictionary<Direction, Node>[map.Width, map.Height];
-
-        for (int col = 0; col < map.Width; col++)
-        {
-            for (int row = 0; row < map.Height; row++)
-            {
-                var localFuturePositions = new Dictionary<Direction, Node>();
-                localFuturePositions[Direction.IDLE] = ComputeFuturePosition(map, col, row, Direction.IDLE, depthIntoTheFuture);
-                localFuturePositions[Direction.UP] = ComputeFuturePosition(map, col, row, Direction.UP, depthIntoTheFuture);
-                localFuturePositions[Direction.DOWN] = ComputeFuturePosition(map, col, row, Direction.DOWN, depthIntoTheFuture);
-                localFuturePositions[Direction.LEFT] = ComputeFuturePosition(map, col, row, Direction.LEFT, depthIntoTheFuture);
-                localFuturePositions[Direction.RIGHT] = ComputeFuturePosition(map, col, row, Direction.RIGHT, depthIntoTheFuture);
-
-                result[col, row] = localFuturePositions;
-            }
-        }
-        return result;
-    }
-
-    public Node ComputeFuturePosition(Map map, int col, int row, Direction direction, int depthIntoTheFuture)
-    {
-        try
-        {
-            int resultCol = col;
-            int resultRow = row;
-
-            int colIncr = 0;
-            int rowIncr = 0;
-
-            switch (direction)
-            {
-                case Direction.UP:
-                    rowIncr--;
-                    break;
-                case Direction.DOWN:
-                    rowIncr++;
-                    break;
-                case Direction.LEFT:
-                    colIncr--;
-                    break;
-                case Direction.RIGHT:
-                    colIncr++;
-                    break;
-                default:
-                    break;
-            }
-            for (int ii = 0; ii < depthIntoTheFuture; ii++)
-            {
-                if (resultCol + colIncr == -1 || resultCol + colIncr == map.Width || map.Blocks[resultCol + colIncr, resultRow])
-                    colIncr *= -1;
-                if (resultRow + rowIncr == -1 || resultRow + rowIncr == map.Height || map.Blocks[resultCol, resultRow + rowIncr])
-                    rowIncr *= -1;
-                resultCol += colIncr;
-                resultRow += rowIncr;
-            }
-            Position position = new Position(resultCol, resultRow);
-            return new Node()
-            {
-                Position = position,
-                Direction = GetDirection(colIncr, rowIncr)
-            };
-        }
-        catch (IndexOutOfRangeException)
-        {
-            // That is so fucking lazy, I'm not even ashamed
-            return new Node();
-        }
-    }
-
-    public Direction GetDirection(int colIncr, int rowIncr)
-    {
-        if (rowIncr == -1) return Direction.UP;
-        if (rowIncr == 1) return Direction.DOWN;
-        if (colIncr == -1) return Direction.LEFT;
-        if (colIncr == 1) return Direction.RIGHT;
-        return Direction.IDLE;
-    }
-
-    public List<Position?> PositionsToBomb(Map map)
-    {
-        var commandsAndAssociatedDamage = GetPositionsAndAssociatedDamage(map);
-
-        List<Position> positionsToBomb = commandsAndAssociatedDamage.Keys.ToList();
-        positionsToBomb.Sort((p1, p2) =>
-            commandsAndAssociatedDamage[p2].Count.CompareTo(
-            commandsAndAssociatedDamage[p1].Count));
-
-        foreach (Position positionToBomb in positionsToBomb)
-        {
-            if (map.LiveNodes.Count == commandsAndAssociatedDamage[positionToBomb].Count)
-                return new List<Position?>() { positionToBomb, null, null, null };
-            Map nextMap = GetNextMap(map, commandsAndAssociatedDamage[positionToBomb]);
-
-            if (nextMap.BombsLeft == 0 || nextMap.RoundsLeft == 0)
-                continue;
-
-            List<Position?> result = PositionsToBomb(nextMap);
-            if (result != null)
-            {
-                result.Insert(0, positionToBomb);
-                return result;
-            }
-        }
-        // Case WAIT
-        {
-            Map nextMap = GetNextMap(map, new List<int>());
-
-            if (nextMap.RoundsLeft > 0)
-            {
-                List<Position?> result = PositionsToBomb(nextMap);
-                if (result != null)
-                {
-                    result.Insert(0, null);
-                    return result;
-                }
-            }
-        }
-
-        return null;
-    }
-
-    public Map GetNextMap(Map map, List<int> positionsHurt)
-    {
-        Map nextMap = new Map(map.Height, map.Width)
-        {
-            RoundsLeft = map.RoundsLeft - 1,
-            BombsLeft = map.BombsLeft - (positionsHurt.Count > 0 ? 1 : 0),
-        };
-
-        for (int ii = 0; ii < map.LiveNodes.Count; ii++)
-        {
-            Node node = map.LiveNodes[ii];
-            Node newNode = NextTurnPositions[node.Position.Col, node.Position.Row][node.Direction];
-            newNode.Id = node.Id;
-            if (positionsHurt.Count > 0)
-                ProcessNode(newNode, positionsHurt, nextMap);
-            else
-                nextMap.LiveNodes.Add(newNode);
-        }
-        for (int ii = 0; ii < map.NodesAboutToDie.Count; ii++)
-        {
-            Node node = map.NodesAboutToDie[ii];
-            Node newNode = NextTurnPositions[node.Position.Col, node.Position.Row][node.Direction];
-            newNode.Id = node.Id;
-            if (newNode.TimeToLive > 0)
-            {
-                newNode.TimeToLive--;
-                nextMap.NodesAboutToDie.Add(newNode);
-            }
-        }
-
-        return nextMap;
-    }
-
-    public Dictionary<Position, List<int>> GetPositionsAndAssociatedDamage(Map map)
-    {
-        var positionsAndAssociatedDamage = new Dictionary<Position, List<int>>();
-
-        for (int row = 0; row < map.Height; row++)
-        {
-            for (int col = 0; col < map.Width; col++)
-            {
-                if (map.ContainsAnyNode(col, row)) continue;
-                if (map.Blocks[col, row]) continue;
-                Position position = new Position(col, row);
-                List<int> damagedNodes = GetDamagedNodes(map, position);
-                if (damagedNodes.Count == 0) continue;
-                if (!BetterPositionExists(positionsAndAssociatedDamage.Values, damagedNodes))
-                {
-                    for (int ii = 0; ii < positionsAndAssociatedDamage.Count;)
-                    {
-                        var positionToCheck = positionsAndAssociatedDamage.Keys.ElementAt(ii);
-                        if (IsBetterPosition(damagedNodes, positionsAndAssociatedDamage[positionToCheck]))
-                        {
-                            positionsAndAssociatedDamage.Remove(positionToCheck);
-                        }
-                        else
-                        {
-                            ii++;
-                        }
-                    }
-                    positionsAndAssociatedDamage[position] = damagedNodes;
-                }
-            }
-        }
-        return positionsAndAssociatedDamage;
-    }
-
-    public bool BetterPositionExists(IEnumerable<List<int>> allExistingDamages, List<int> newDamage)
-    {
-        foreach (var existingDamages in allExistingDamages)
-        {
-            if (IsBetterPosition(existingDamages, newDamage))
-                return true;
-        }
-        return false;
-    }
-
-    public bool IsBetterPosition(List<int> damages1, List<int> damages2)
-    {
-        if (damages1.Count < damages2.Count) return false;
-        foreach (var damage in damages2)
-        {
-            if (!damages1.Contains(damage))
-                return false;
-        }
-        return true;
-    }
-
-    public List<int> GetDamagedNodes(Map map, Position position)
-    {
-        var futureMap = map;
-        for (int ii = 0; ii < Constants.BOMB_TIMEOUT; ii++)
-        {
-            futureMap = futureMap.GetNextMap();
-        }
-        var impacts = futureMap.GetImpacts(position);
-        return futureMap.LiveNodes.Where(n => impacts.Contains(n.Position)).Select(n => n.Id).ToList();
-    }
-
-    public void ProcessNode(Node node, List<int> nodesHurt, Map map)
-    {
-        foreach (int nodeId in nodesHurt)
-        {
-            if (nodeId == node.Id)
-            {
-                node.TimeToLive = Constants.BOMB_TIMEOUT;
-                map.NodesAboutToDie.Add(node);
-                return;
-            }
-        }
-        map.LiveNodes.Add(node);
-        return;
     }
 }
 
@@ -608,13 +349,9 @@ public class Map
 
     public bool[,] Blocks;
 
-    //public int[,] PotentialDamagedNodes;
+    public List<Node> LiveNodes = new();
 
-    public List<Node> LiveNodes = new List<Node>();
-
-    public List<Node> NodesAboutToDie = new List<Node>();
-
-    public List<Position> BombsPlanted = new List<Position>();
+    public List<Position> BombsPlanted = new();
 
     public List<PositionAndDamage> BestOptions;
 
@@ -675,7 +412,6 @@ public class Map
         var nextMap = (Map)MemberwiseClone();
         nextMap.RoundsLeft--;
         nextMap.LiveNodes = GetUpdatedNodes(LiveNodes, impacts).ToList();
-        //clone.NodesAboutToDie = LiveNodes.ToList();
 
         return nextMap;
     }
@@ -746,7 +482,7 @@ public class Map
 
     public List<Position> GetImpacts(Position? explosion)
     {
-        List<Position> impacts = new List<Position>();
+        var impacts = new List<Position>();
         if (explosion != null)
         {
             var boom = explosion.Value;
@@ -782,11 +518,6 @@ public class Map
             Node node = LiveNodes[ii];
             if (node.Position.Col == col && node.Position.Row == row) return true;
         }
-        for (int ii = 0; ii < NodesAboutToDie.Count; ii++)
-        {
-            Node node = NodesAboutToDie[ii];
-            if (node.Position.Col == col && node.Position.Row == row) return true;
-        }
         return false;
     }
 
@@ -796,7 +527,7 @@ public class Map
         return newPosition.Col >= 0 && newPosition.Col < Width && newPosition.Row >= 0 && newPosition.Row < Height && !Blocks[newPosition.Col, newPosition.Row];
     }
 
-    public Position UnsafeNextPosition(Position position, Direction direction)
+    public static Position UnsafeNextPosition(Position position, Direction direction)
     {
         return new Position(
             position.Col + (((int)direction - 2) % 2),
@@ -806,7 +537,7 @@ public class Map
 
     public override string ToString()
     {
-        StringBuilder sb = new StringBuilder();
+        var sb = new StringBuilder();
         sb.AppendLine($"{RoundsLeft} {BombsLeft}");
 
         for (int row = 0; row < Height; row++)
@@ -828,7 +559,6 @@ public class Map
 
     public void ComputePotentialDamage()
     {
-        //PotentialDamagedNodes = new int[Width, Height];
         var potentialDamagedNodes = new List<PositionAndDamage>();
         for (int col = 0; col < Width; col++)
         {
@@ -842,7 +572,6 @@ public class Map
                     if (destroyed.Any())
                     {
                         var aggDestroyed = destroyed.Select(n => n.Id).Aggregate((id1, id2) => id1 | id2);
-                        //PotentialDamagedNodes[col, row] = aggDestroyed;
                         var pad = new PositionAndDamage(aggDestroyed, position);
                         potentialDamagedNodes.Add(pad);
                     }
@@ -850,7 +579,6 @@ public class Map
             }
         }
         BestOptions = potentialDamagedNodes.OrderByDescending(pad => pad.Count).ToList();
-        //BestOptions.Add(new PositionAndDamage { Position = null, Count = 0, NodesKey = 0 });
     }
 
 }

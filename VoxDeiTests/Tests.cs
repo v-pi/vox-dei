@@ -3,6 +3,7 @@ using System.Collections.Generic;
 
 namespace VoxDeiTests
 {
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Style", "IDE1006:Naming Styles", Justification = "Need to start methods with a number")]
     public class Tests
     {
         [Test]

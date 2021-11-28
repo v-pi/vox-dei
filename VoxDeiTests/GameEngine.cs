@@ -15,7 +15,7 @@ namespace VoxDeiTests
         private int turnCounter;
 
         Map currentMap;
-        private List<string> commands = new List<string>();
+
         public Position?[] Explosions { get; }
 
         private Queue<string> _toRead;
@@ -42,7 +42,7 @@ namespace VoxDeiTests
             _toRead = new Queue<string>(allLines);
         }
 
-        private bool[,] GetBlockArray(List<Position> blocks, int cols, int rows)
+        private static bool[,] GetBlockArray(List<Position> blocks, int cols, int rows)
         {
             var array = new bool[cols, rows];
             foreach (var block in blocks)
@@ -66,8 +66,6 @@ namespace VoxDeiTests
 
         public void WriteLine(string s)
         {
-            commands.Add(s);
-
             if (s != "WAIT")
             {
                 if (currentMap.BombsLeft == 0)
