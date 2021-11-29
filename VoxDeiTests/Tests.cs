@@ -225,7 +225,7 @@ namespace VoxDeiTests
 
         [Test]
         //[Ignore("Takes too much time")]
-        //[Timeout(5000)]
+        [Timeout(5000)]
         public void _10_vandalisme()
         {
             var nodes = new List<Node>

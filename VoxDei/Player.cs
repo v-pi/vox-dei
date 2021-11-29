@@ -106,9 +106,9 @@ namespace VoxDei
                 zone.Add(currentCell);
                 while (toExplore.TryDequeue(out currentCell))
                 {
-                    foreach (var direction in Enum.GetValues<Direction>())
+                    foreach (var direction in Enum.GetValues(typeof(Direction)))
                     {
-                        var neighbour = Map.UnsafeNextPosition(currentCell, direction);
+                        var neighbour = Map.UnsafeNextPosition(currentCell, (Direction)direction);
                         if (emptyCells.Remove(neighbour))
                         {
                             zone.Add(neighbour);
@@ -143,6 +143,7 @@ namespace VoxDei
         public static List<Position?> PositionsToBomb(List<Map> maps)
         {
             var maxBomb = maps[0].BombsLeft;
+            var totalRounds = maps[0].RoundsLeft;
             var allCommands = new List<Position?>();
             var ellapsed = 0;
             while (maps.Count > 1)
@@ -160,7 +161,10 @@ namespace VoxDei
                     foreach (var map in maps)
                     {
                         map.BombsLeft = ii;
+                        map.RoundsLeft = totalRounds / maps.Count;
+                        var sw = Stopwatch.StartNew();
                         var commands = PositionsToBomb(map);
+                        Logger.Log($"PositionsToBomb in {sw.ElapsedMilliseconds}ms");
                         if (commands != null)
                         {
                             candidates[map] = commands;
@@ -173,6 +177,7 @@ namespace VoxDei
                         maxBomb -= bestCandidate.Value.Count(c => c != null);
                         allCommands.AddRange(bestCandidate.Value);
                         ellapsed = bestCandidate.Value.Count();
+                        totalRounds -= ellapsed;
                         break;
                     }
                 }
@@ -181,6 +186,7 @@ namespace VoxDei
             for (int jj = 0; jj < ellapsed; jj++)
             {
                 remainingMap = remainingMap.GetNextMap();
+                remainingMap.RoundsLeft = totalRounds;
             }
             allCommands.AddRange(PositionsToBomb(remainingMap));
             return allCommands;
@@ -229,17 +235,24 @@ namespace VoxDei
         {
             // check that no node is there when we want to drop the bomb
             // check that there are no chain explosions
-
+            // TODO : replace all foreach with for
+            // TODO : replace all lists with arrays
             var futureRound = index + Constants.BOMB_TIMEOUT;
             if (futureRound >= allFutureMaps.Length)
             {
                 return null;
             }
-            // TODO : si la meilleure des BestOption sur tous les rounds restants est inférieure au nombre de nodes restante divisé par le nombre de bombes restantes, on peut renvoyer null
+
+            // DONE : si la meilleure des BestOption sur tous les rounds restants est inférieure au nombre de nodes restante divisé par le nombre de bombes restantes, on peut renvoyer null
+            // TODO : hardcore should continue : check best options regarding allready destroyedNodes
             int remainingBestOption = 0;
             for (int ii = futureRound; ii < allFutureMaps.Length; ii++)
             {
-                remainingBestOption = Math.Max(remainingBestOption, allFutureMaps[ii].BestOptions.FirstOrDefault().Count);
+                var bestOptions = allFutureMaps[ii].BestOptions;
+                if (bestOptions.Count > 0)
+                {
+                    remainingBestOption = Math.Max(remainingBestOption, bestOptions[0].Count);
+                }
             }
             var remainingNodesKey = allNodesKey & ~destroyedNodes;
             var remainingNodesCount = (float)Utils.CountSetBits(remainingNodesKey);
@@ -329,7 +342,37 @@ namespace VoxDei
                 map = map.GetNextMap();
                 map.ComputePotentialDamage();
             }
+            RemoveInferiorOptions(allFutureMaps);
             return allFutureMaps;
+        }
+
+        private static void RemoveInferiorOptions(Map[] allFutureMaps)
+        {
+            const int turnsToExplore = 1;
+            for (int ii = 0; ii < allFutureMaps.Length; ii++)
+            {
+                var map = allFutureMaps[ii];
+                var otherTurnOptions = new HashSet<int>();
+                for (int jj = Math.Max(0, ii - turnsToExplore); jj < Math.Min(allFutureMaps.Length, ii + turnsToExplore); jj++)
+                {
+                    foreach (var option in allFutureMaps[jj].BestOptions)
+                    {
+                        otherTurnOptions.Add(option.NodesKey);
+                    }
+                }
+                for (int kk = 0; kk < map.BestOptions.Count;)
+                {
+                    var bestOption = map.BestOptions[kk];
+                    if (otherTurnOptions.Any(o => o.IsStrictlyBetterOption(bestOption.NodesKey)))
+                    {
+                        map.BestOptions.RemoveAt(kk);
+                    }
+                    else
+                    {
+                        kk++;
+                    }
+                }
+            }
         }
     }
 
@@ -716,9 +759,30 @@ namespace VoxDei
                     }
                 }
             }
-            BestOptions = potentialDamagedNodes.OrderByDescending(pad => pad.Count).ToList();
+            GetDistinctOptions(potentialDamagedNodes);
         }
 
+        private void GetDistinctOptions(List<PositionAndDamage> potentialDamagedNodes)
+        {
+            BestOptions = new List<PositionAndDamage>();
+            var options = potentialDamagedNodes.OrderByDescending(pad => pad.Count).ToList();
+            foreach (var option in options)
+            {
+                var isAmongTheBest = true;
+                foreach (var bestOption in BestOptions)
+                {
+                    if (bestOption.IsBetterThan(option))
+                    {
+                        isAmongTheBest = false;
+                        break;
+                    }
+                }
+                if (isAmongTheBest)
+                {
+                    BestOptions.Add(option);
+                }
+            }
+        }
     }
 
     public static class Utils
@@ -737,6 +801,16 @@ namespace VoxDei
                 count++;
             }
             return count;
+        }
+
+        public static bool IsBetterOption(this int nk1, int nk2)
+        {
+            return (nk1 | nk2) == nk1;
+        }
+
+        public static bool IsStrictlyBetterOption(this int nk1, int nk2)
+        {
+            return (nk1 | nk2) == nk1 && nk1 > nk2;
         }
     }
 
@@ -758,6 +832,11 @@ namespace VoxDei
         private static int GetDamageCount(int value)
         {
             return Utils.CountSetBits(value);
+        }
+
+        public bool IsBetterThan(PositionAndDamage option)
+        {
+            return this.NodesKey.IsBetterOption(option.NodesKey);
         }
     }
 
