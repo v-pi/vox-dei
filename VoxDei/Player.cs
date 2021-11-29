@@ -39,6 +39,7 @@ namespace VoxDei
         {
             IoManager.ParseParameters(out Width, out Height);
             Map firstMap = IoManager.ParseTurn(Height);
+            firstMap.RoundsLeft = Math.Min(firstMap.RoundsLeft, 50);
             int turnsToUnderstandMoves = 0;
 
             var nodesWithDirections = new List<Node>();
@@ -54,7 +55,7 @@ namespace VoxDei
 
                 Scout.TryToUnderstandMoves(maps, nodesWithoutDirections, nodesWithDirections);
                 sw1.Stop();
-                Logger.Log("Understood map (or not) in {0}ms", sw1.ElapsedMilliseconds);
+                Logger.Log($"Understood map (or not) in {sw1.ElapsedMilliseconds}ms");
             }
             firstMap.Nodes = nodesWithDirections;
             for (int ii = 0; ii < turnsToUnderstandMoves; ii++)
@@ -65,18 +66,30 @@ namespace VoxDei
             //ExecuteCommand(null); // WAIT one last time, we're gonna need all the time we can get to compute the solution
             //ParseTurn();
 
-            Stopwatch sw2 = Stopwatch.StartNew();
             var split = MapSplitter.Split(firstMap);
-            List<Position?> positionsToBomb = Strategist.PositionsToBomb(split);
-            positionsToBomb?.AddRange(Enumerable.Repeat<Position?>(null, Constants.BOMB_TIMEOUT));
-            sw2.Stop();
-            Logger.Log("Found a series of command in {0}ms", sw2.ElapsedMilliseconds);
-
-            foreach (Position? positionToBomb in positionsToBomb)
+            while (split.Count > 1)
+            {
+                Stopwatch sw2 = Stopwatch.StartNew();
+                List<Position?> positionsToBomb = Strategist.PositionsToBomb(split);
+                sw2.Stop();
+                Logger.Log($"Found a series of command in {sw2.ElapsedMilliseconds}ms");
+                foreach (Position? positionToBomb in positionsToBomb)
+                {
+                    IoManager.ExecuteCommand(positionToBomb);
+                    Map _ = IoManager.ParseTurn(Height);
+                }
+            }
+            Stopwatch sw3 = Stopwatch.StartNew();
+            var endSequence = Strategist.PositionsToBomb(split.Single());
+            endSequence.AddRange(Enumerable.Repeat<Position?>(null, Constants.BOMB_TIMEOUT));
+            foreach (Position? positionToBomb in endSequence)
             {
                 IoManager.ExecuteCommand(positionToBomb);
                 Map _ = IoManager.ParseTurn(Height);
             }
+            sw3.Stop();
+            Logger.Log($"Found the end sequence in {sw3.ElapsedMilliseconds}ms");
+
         }
     }
 
@@ -144,52 +157,42 @@ namespace VoxDei
         {
             var maxBomb = maps[0].BombsLeft;
             var totalRounds = maps[0].RoundsLeft;
-            var allCommands = new List<Position?>();
-            var ellapsed = 0;
-            while (maps.Count > 1)
+            int bombsUsed;
+            KeyValuePair<Map, List<Position?>> bestCandidate = new KeyValuePair<Map, List<Position?>>();
+
+            for (bombsUsed = 1; bombsUsed < maxBomb; bombsUsed++)
             {
-                for (int ii = 0; ii < maps.Count; ii++)
+                var candidates = new Dictionary<Map, List<Position?>>();
+                foreach (var map in maps)
                 {
-                    for (int jj = 0; jj < ellapsed; jj++)
+                    map.BombsLeft = bombsUsed;
+                    map.RoundsLeft = totalRounds / maps.Count;
+                    var sw = Stopwatch.StartNew();
+                    var commands = PositionsToBomb(map);
+                    Logger.Log($"PositionsToBomb in {sw.ElapsedMilliseconds}ms");
+                    if (commands != null)
                     {
-                        maps[ii] = maps[ii].GetNextMap();
+                        candidates[map] = commands;
                     }
                 }
-                for (int ii = 1; ii < maxBomb; ii++)
+                if (candidates.Count > 0)
                 {
-                    var candidates = new Dictionary<Map, List<Position?>>();
-                    foreach (var map in maps)
-                    {
-                        map.BombsLeft = ii;
-                        map.RoundsLeft = totalRounds / maps.Count;
-                        var sw = Stopwatch.StartNew();
-                        var commands = PositionsToBomb(map);
-                        Logger.Log($"PositionsToBomb in {sw.ElapsedMilliseconds}ms");
-                        if (commands != null)
-                        {
-                            candidates[map] = commands;
-                        }
-                    }
-                    if (candidates.Count > 0)
-                    {
-                        var bestCandidate = candidates.OrderBy(kv => kv.Value.Count).First();
-                        maps.Remove(bestCandidate.Key);
-                        maxBomb -= bestCandidate.Value.Count(c => c != null);
-                        allCommands.AddRange(bestCandidate.Value);
-                        ellapsed = bestCandidate.Value.Count();
-                        totalRounds -= ellapsed;
-                        break;
-                    }
+                    bestCandidate = candidates.OrderBy(kv => kv.Value.Count).First();
+                    maps.Remove(bestCandidate.Key);
+                    break;
                 }
             }
-            var remainingMap = maps.Single();
-            for (int jj = 0; jj < ellapsed; jj++)
+            for (int ii = 0; ii < maps.Count; ii++)
             {
-                remainingMap = remainingMap.GetNextMap();
-                remainingMap.RoundsLeft = totalRounds;
+                for (int jj = 0; jj < bestCandidate.Value.Count; jj++)
+                {
+                    maps[ii] = maps[ii].GetNextMap();
+                }
+                maps[ii].BombsLeft = maxBomb - bombsUsed;
+                maps[ii].RoundsLeft = totalRounds - bestCandidate.Value.Count;
             }
-            allCommands.AddRange(PositionsToBomb(remainingMap));
-            return allCommands;
+
+            return bestCandidate.Value;
         }
 
         public static List<Position?> PositionsToBomb(Map map)
@@ -331,18 +334,30 @@ namespace VoxDei
             return commands;
         }
 
-        private static Map[] GetAllFutureMaps(Map map)
+        private static Map[] GetAllFutureMaps(Map firstMap)
         {
-            var totalRounds = map.RoundsLeft;
-            map.ComputePotentialDamage();
+            var totalRounds = firstMap.RoundsLeft;
             var allFutureMaps = new Map[totalRounds];
-            while (map.RoundsLeft > 0)
+            var currentMap = firstMap;
+            while (currentMap.RoundsLeft > 0)
             {
-                allFutureMaps[totalRounds - map.RoundsLeft] = map;
-                map = map.GetNextMap();
-                map.ComputePotentialDamage();
+                allFutureMaps[totalRounds - currentMap.RoundsLeft] = currentMap;
+                currentMap = currentMap.GetNextMap();
+                currentMap.ComputePotentialDamage();
             }
-            RemoveInferiorOptions(allFutureMaps);
+            //RemoveInferiorOptions(allFutureMaps);
+            for (int ii = 0; ii < allFutureMaps.Length; ii++)
+            {
+                var futureMap = allFutureMaps[ii];
+                var potentialDamage = futureMap.ComputePotentialDamage();
+                Map mapWithNodes = null;
+                if (ii >= 3)
+                {
+                    mapWithNodes = allFutureMaps[ii - Constants.BOMB_TIMEOUT];
+                }
+                futureMap.GetDistinctOptions(potentialDamage, mapWithNodes);
+            }
+
             return allFutureMaps;
         }
 
@@ -663,7 +678,7 @@ namespace VoxDei
 
         public List<Position> GetImpacts(Position? explosion)
         {
-            var impacts = new List<Position>();
+            var impacts = new List<Position>(13);
             if (explosion != null)
             {
                 var boom = explosion.Value;
@@ -738,7 +753,7 @@ namespace VoxDei
             return sb.ToString().Trim('\r', '\n');
         }
 
-        public void ComputePotentialDamage()
+        public List<PositionAndDamage> ComputePotentialDamage()
         {
             var potentialDamagedNodes = new List<PositionAndDamage>();
             for (int col = 0; col < Width; col++)
@@ -748,35 +763,56 @@ namespace VoxDei
                     if (!Blocks[col, row])
                     {
                         var position = new Position(col, row);
-                        var impacts = GetImpacts(position);
-                        var destroyed = Nodes.Where(n => impacts.Contains(n.Position)).ToList();
-                        if (destroyed.Any())
+                        var impacts = GetImpacts(position).ToArray();
+
+                        var aggDestroyed = 0;
+                        foreach (var node in Nodes)
                         {
-                            var aggDestroyed = destroyed.Select(n => n.Id).Aggregate((id1, id2) => id1 | id2);
+                            foreach (var impact in impacts)
+                            {
+                                if (node.Position.Col == impact.Col && node.Position.Row == impact.Row)
+                                {
+                                    aggDestroyed |= node.Id;
+                                }
+                            }
+                        }
+                        if (aggDestroyed != 0)
+                        {
                             var pad = new PositionAndDamage(aggDestroyed, position);
                             potentialDamagedNodes.Add(pad);
                         }
                     }
                 }
             }
-            GetDistinctOptions(potentialDamagedNodes);
+
+            return potentialDamagedNodes;
         }
 
-        private void GetDistinctOptions(List<PositionAndDamage> potentialDamagedNodes)
+        public void GetDistinctOptions(List<PositionAndDamage> potentialDamagedNodes, Map mapWithNodes)
         {
             BestOptions = new List<PositionAndDamage>();
             var options = potentialDamagedNodes.OrderByDescending(pad => pad.Count).ToList();
             foreach (var option in options)
             {
                 var isAmongTheBest = true;
-                foreach (var bestOption in BestOptions)
+                for (var ii = 0; ii < BestOptions.Count; ii++)
                 {
+                    var bestOption = BestOptions[ii];
+                    if (bestOption.NodesKey == option.NodesKey)
+                    {
+                        if (mapWithNodes != null && mapWithNodes.Nodes.Any(n => n.Position == bestOption.Position))
+                        {
+                            BestOptions[ii] = option;
+                            break;
+                        }
+                    }
                     if (bestOption.IsBetterThan(option))
                     {
                         isAmongTheBest = false;
                         break;
                     }
                 }
+
                 if (isAmongTheBest)
                 {
                     BestOptions.Add(option);
